@@ -2,9 +2,9 @@ const pool = require('../config/database');
 const { generateShortCode } = require('../utils/shortCodeGenerator');
 const QRCode = require('qrcode');
 
-
+// ✅ URL kısaltma işlemi
 const shortenUrl = async (req, res) => {
-  const { original_url, custom_alias } = req.body;
+  const { original_url, custom_alias, expires_at } = req.body;
 
   if (!original_url || !original_url.startsWith('http')) {
     return res.status(400).json({ error: 'Geçerli bir URL giriniz.' });
@@ -13,6 +13,7 @@ const shortenUrl = async (req, res) => {
   const short_code = custom_alias || generateShortCode(6);
 
   try {
+    // Aynı kısa kod zaten varsa hata döndür
     const existing = await pool.query(
       'SELECT * FROM urls WHERE short_code = $1',
       [short_code]
@@ -23,8 +24,10 @@ const shortenUrl = async (req, res) => {
     }
 
     const result = await pool.query(
-      'INSERT INTO urls (original_url, short_code, custom_alias) VALUES ($1, $2, $3) RETURNING *',
-      [original_url, short_code, custom_alias || null]
+      `INSERT INTO urls (original_url, short_code, custom_alias, expires_at)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [original_url, short_code, custom_alias || null, expires_at || null]
     );
 
     return res.status(201).json({
@@ -37,6 +40,7 @@ const shortenUrl = async (req, res) => {
   }
 };
 
+// ✅ Yönlendirme ve tıklama kaydı
 const redirectUrl = async (req, res) => {
   const { short_code } = req.params;
 
@@ -52,15 +56,18 @@ const redirectUrl = async (req, res) => {
 
     const url = urlResult.rows[0];
 
+    // Süresi dolmuşsa hata döndür
     if (url.expires_at && new Date(url.expires_at) < new Date()) {
       return res.status(410).json({ error: 'Link süresi dolmuş.' });
     }
 
+    // Tıklama sayısını artır
     await pool.query(
       'UPDATE urls SET click_count = click_count + 1 WHERE id = $1',
       [url.id]
     );
 
+    // Analytics kaydı
     await pool.query(
       `INSERT INTO analytics (url_id, ip_address, user_agent, referer)
        VALUES ($1, $2, $3, $4)`,
@@ -78,6 +85,8 @@ const redirectUrl = async (req, res) => {
     return res.status(500).json({ error: 'Sunucu hatası.' });
   }
 };
+
+// ✅ QR kod üretimi
 const generateQrCode = async (req, res) => {
   const { short_code } = req.params;
 
@@ -106,6 +115,5 @@ const generateQrCode = async (req, res) => {
     return res.status(500).json({ error: 'Sunucu hatası.' });
   }
 };
-
 
 module.exports = { shortenUrl, redirectUrl, generateQrCode };
